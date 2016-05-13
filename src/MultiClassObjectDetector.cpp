@@ -20,6 +20,7 @@
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 
+#include <darknet/image.h>
 #include "MultiClassObjectDetector.h"
 
 #include "dn_object_detect/DetectedObjects.h"
@@ -31,13 +32,22 @@ using namespace cv;
   
 static const int kPublishFreq = 10;
 static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
-static const string kYOLOModel = "data/yolo.model";
-static const string kYOLOConfig = "data/yolo_config.ini";
+static const string kYOLOModel = "data/yolo.weights";
+static const string kYOLOConfig = "data/yolo.cfg";
+
+static const char * VoClassNames[] = { "aeroplane", "bicycle", "bird", // should not hard code these name
+                              "boat", "bottle", "bus", "car",
+                              "cat", "chair", "cow", "diningtable",
+                              "dog", "horse", "motorbike",
+                              "person", "pottedplant", "sheep",
+                              "sofa", "train", "tvmonitor"
+                            };
+
+static int NofVoClasses = sizeof( VoClassNames ) / sizeof( VoClassNames[0] );
 
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
   doDetection_( false ),
-  stoppingBDThread_( false ),
   showDebug_( false ),
   srvRequests_( 0 ),
   procThread_( NULL )
@@ -62,15 +72,16 @@ void MultiClassObjectDetector::init()
   priNh.param<std::string>( "camera", cameraDevice_, kDefaultDevice );
   priNh.param<std::string>( "yolo_model", yoloModelFile, kYOLOModel );
   priNh.param<std::string>( "yolo_config", yoloConfigFile, kYOLOConfig );
+  priNh.param( "threshold", threshold_, 0.2f );
   
   const boost::filesystem::path modelFilePath = yoloModelFile;
   const boost::filesystem::path configFilepath = yoloConfigFile;
   
-  if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( yoloConfigFile )) {
-    darkNet_ = parse_net_work_cfg( yoloConfigFile.c_str() );
-    load_weights( &darkNet_, yoloModelFile.c_str() );
+  if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( configFilepath )) {
+    darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
+    load_weights( &darkNet_, (char*)yoloModelFile.c_str() );
     detectLayer_ = darkNet_.layers[darkNet_.n-1];
-    set_batch_darkNet_work( &darkNet_, 1 );
+    set_batch_network( &darkNet_, 1 );
     srand(2222222);
   }
   else {
@@ -89,6 +100,7 @@ void MultiClassObjectDetector::init()
 
 void MultiClassObjectDetector::fini()
 {
+  srvRequests_ = 1; // reset requests
   this->stopDetection();
   imgSub_.shutdown();
 
@@ -108,26 +120,22 @@ void MultiClassObjectDetector::doObjectDetection()
   ros::Rate publish_rate( kPublishFreq );
   ros::Time ts;
 
-  float nms=.5;
+  float nms = 0.5;
 
-  box * boxes = calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof( box ) );
-  float **probs = calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof(float *));
+  box * boxes = (box *)calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof( box ) );
+  float **probs = (float **)calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof(float *));
   for(int j = 0; j < detectLayer_.side * detectLayer_.side * detectLayer_.n; ++j) {
-    probs[j] = calloc( detectLayer_.classes, sizeof(float *) );
+    probs[j] = (float *)calloc( detectLayer_.classes, sizeof(float *) );
   }
 
-  while (1) {
-    stoppingBDThread_ = !doDetection_;
-    
-    if (!stoppingScanThread_ || !stoppingBDThread_) { // make sure we don't go into wait state if scan thread has already quitted.
-      data_preprocess_barrier_->wait();
-    }
-    if (!stoppingScanThread_ || !stoppingBDThread_) {
+  DetectedList detectObjs;
+  detectObjs.reserve( 30 ); // silly hardcode
+
+  while (doDetection_) {
+    {
       boost::mutex::scoped_lock lock( mutex_ );
       if (imgMsgPtr_.get() == NULL) {
         publish_rate.sleep();
-        stoppingBDThread_ = !doDetection_;
-        data_postprocess_barrier_->wait();
         continue;
       }
       try {
@@ -138,50 +146,30 @@ void MultiClassObjectDetector::doObjectDetection()
         ROS_ERROR( "Unable to convert image message to mat." );
         imgMsgPtr_.reset();
         publish_rate.sleep();
-        stoppingBDThread_ = !doDetection_;
-        data_postprocess_barrier_->wait();
         continue;
       }
       imgMsgPtr_.reset();
-      stoppingBDThread_ = !doDetection_;
-      data_postprocess_barrier_->wait();
     }
 
-    if (!stoppingFDThread_ || !stoppingBDThread_) {
-      preprocess_barrier_->wait();
-    }
-
-    image im = load_image_color( input, 0, 0 );
-    image sized = resize_image( im, darkNet_.w, darkNet_.h );
-    float *X = sized.data;
-    float *predictions = darkNet_work_predict( darkNet_, X );
-    //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
-    convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
-        detectLayer_.side, 1, 1, thresh, probs, boxes, 0);
-    if (nms) {
-      do_nms_sort( boxes, probs, detectLayer_.side * detectLayer_.side * detectLayer_.n,
-          detectLayer_.classes, nms );
-    }
-    //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-    //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
-    free_image(im);
-    free_image(sized);
-
-    if ((!stoppingFDThread_ || !stoppingBDThread_) && cv_ptr_.get()) {
-      vector<ObjectWindow> results;
-      Mat gray;
-      cv::cvtColor( cv_ptr_->image, gray, CV_BGR2GRAY );
-      //cv::blur( gray, gray, cv::Size(3, 3) );
-      IplImage img = gray;
-      detection( &img, results );
-      for (size_t i = 0; i < results.size(); i++) {
-        hmBodies_.push_back( cv::Rect( results.at(i).x0, results.at(i).y0,
-           results.at(i).width, results.at(i).height ) );
+    if (cv_ptr_.get()) {
+      IplImage img = cv_ptr_->image;
+      image im = ipl_to_image( &img );
+      image sized = resize_image( im, darkNet_.w, darkNet_.h );
+      float *X = sized.data;
+      float *predictions = network_predict( darkNet_, X );
+      //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
+      convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
+          detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
+      if (nms) {
+        do_nms_sort( boxes, probs, detectLayer_.side * detectLayer_.side * detectLayer_.n,
+            detectLayer_.classes, nms );
       }
-    }
-    stoppingBDThread_ = !doDetection_;
-    postprocess_barrier_->wait();
 
+      this->consolidateDetectedObjects(im, boxes, probs, detectObjs );
+      //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
+      free_image(im);
+      free_image(sized);
+    }
     cv_ptr_.reset();
 
     publish_rate.sleep();
@@ -193,38 +181,6 @@ void MultiClassObjectDetector::doObjectDetection()
   }
   free( probs );
   free( boxes );
-}
-
-void MultiClassObjectDetector::doFaceDetection()
-{
-  cv::Mat faces_downloaded, tmpData;
-  cv::gpu::GpuMat imgData, grayData, facesbuf;
-  int detections = 0;
-
-  while (1) {
-    stoppingFDThread_ = !doDetection_;
-    preprocess_barrier_->wait();
-    
-    if (stoppingBDThread_ && stoppingFDThread_)
-      break;
-    
-    hmFaces_.clear();
-
-    //cv::blur( cv_ptr_->image, tmpData, cv::Size( 4, 4 ) );
-    imgData.upload( cv_ptr_->image );
-    cv::gpu::cvtColor( imgData, grayData, CV_BGR2GRAY );
-    cv::gpu::equalizeHist( grayData, grayData );
-    detections = faceDetector_.detectMultiScale( grayData, facesbuf, 1.2, 4, 
-       cv::Size(30, 30) );
-    facesbuf.colRange(0, detections).download( faces_downloaded );
-    for (int i = 0; i < detections; ++i) {
-      hmFaces_.push_back( faces_downloaded.ptr<cv::Rect>()[i] );
-    }
-    stoppingFDThread_ = !doDetection_;
-    postprocess_barrier_->wait();
-    if (stoppingBDThread_ && stoppingFDThread_)
-      break;
-  }
 }
   
 void MultiClassObjectDetector::processingRawImages( const sensor_msgs::ImageConstPtr& msg )
@@ -246,18 +202,11 @@ void MultiClassObjectDetector::startDetection()
   }
 
   doDetection_ = true;
-  stoppingBDThread_ = stoppingFDThread_ = stoppingScanThread_ = false;
   cv_ptr_.reset();
   imgMsgPtr_.reset();
 
   imgSub_ = imgTrans_.subscribe( cameraDevice_, 1,
                                   &MultiClassObjectDetector::processingRawImages, this );
-
-
-  preprocess_barrier_ = new boost::barrier( 2 );
-  postprocess_barrier_ = new boost::barrier( 2 );
-  data_preprocess_barrier_ = new boost::barrier( 2 );
-  data_postprocess_barrier_ = new boost::barrier( 2 );
   
   object_detect_thread_ = new boost::thread( &MultiClassObjectDetector::doObjectDetection, this );
 
@@ -278,51 +227,95 @@ void MultiClassObjectDetector::stopDetection()
     object_detect_thread_ = NULL;
   }
 
-  delete preprocess_barrier_;
-  delete postprocess_barrier_;
-  delete data_preprocess_barrier_;
-  delete data_postprocess_barrier_;
-
   imgSub_.shutdown();
 
   ROS_INFO( "Stopping multi-class object detection service." );
 }
 
-void MultiClassObjectDetector::onIdentifiedObject( const TrackingObject & obj )
+void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs )
 {
-  dn_object_detect::TrackedObjectStatusChange tObjMsg;
+  dn_object_detect::DetectedObjects tObjMsg;
   tObjMsg.header = cv_ptr_->header;
-  tObjMsg.objtype = obj.objectType;
-  tObjMsg.trackid = obj.trackID;
-  tObjMsg.nameid = obj.recognisedID;
-  tObjMsg.status = REC_OBJ;
   
+  tObjMsg.objects.resize( objs.size() );
+
+  for (size_t i = 0; i < tObjMsg.size(); i++) {
+    tObjUpdMsg.objects[i] = objs[i];
+  }
+
   dtcPub_.publish( tObjMsg );
 }
 
-void MultiClassObjectDetector::drawDebug( std::vector<TrackingObject> & tObjs )
+void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
 {
   cv::Scalar boundColour( 255, 0, 255 );
   cv::Scalar connColour( 209, 47, 27 );
 
-  for (size_t i = 0; i < tObjs.size(); i++) {
-    TrackingObject & obj = tObjs.at( i );
-    cv::rectangle( cv_ptr_->image, obj.objectBound, boundColour, 2 );
-    if (obj.dependent) {
-      cv::line( cv_ptr_->image, obj.centre(), obj.dependent->centre(), connColour, 2 );
-    }
+  for (size_t i = 0; i < objs.size(); i++) {
+    dn_object_detect::ObjectInfo & obj = objs.at( i );
+    cv::rectangle( cv_ptr_->image, cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height),
+        boundColour, 2 );
 
     // only write text on the head or body if no head is detected.
-    std::string box_text = format("ID = %d RecID = %d pos = (%.2f,%.2f,%.2f)", obj.trackID, obj.recognisedID,
-                                  obj.est3DCoord.x, obj.est3DCoord.y, obj.est3DCoord.z );
+    std::string box_text = format("%d", obj.type);
     // Calculate the position for annotated text (make sure we don't
     // put illegal values in there):
-    cv::Point2i txpos( std::max(obj.objectBound.x - 10, 0),
-                      std::max(obj.objectBound.y - 10, 0) );
+    cv::Point2i txpos( std::max(obj.tl_x - 10, 0),
+                      std::max(obj.tl_y - 10, 0) );
     // And now put it into the image:
     putText( cv_ptr_->image, box_text, txpos, FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0,255,0), 2.0);
   }
   imgPub_.publish( cv_ptr_->toImageMsg() );
+}
+
+void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, const box * boxes,
+      const float **probs, DetectedList & objList )
+{
+  int max_nofb = detectLayer_.side * detectLayer_.side * detectLayer_.n;
+  int objclass = 0;
+  float prob = 0.0;
+
+  objList.clear();
+
+  for(int i = 0; i < max_nofb; ++i){
+    objclass = max_index( probs[i], NofVoClasses );
+    prob = probs[i][objclass];
+
+    if (prob > threshold_) {
+      int width = pow( prob, 0.5 ) * 10 + 1;
+      dn_object_detect::ObjectInfo newObj;
+      newObj.type = VoClassNames[objclass];
+      newObj.prob = prob;
+      /*
+      printf("%s: %.2f\n", VoClassNames[objclass], prob);
+      int offset = class * 17 % classes;
+      float red = get_color(0,offset,classes);
+      float green = get_color(1,offset,classes);
+      float blue = get_color(2,offset,classes);
+      float rgb[3];
+      rgb[0] = red;
+      rgb[1] = green;
+      rgb[2] = blue;
+      box b = boxes[i];
+      */
+
+      int left  = (boxes[i].x - boxes[i].w/2.) * im->w;
+      int right = (boxes[i].x + boxes[i].w/2.) * im->w;
+      int top   = (boxes[i].y - boxes[i].h/2.) * im->h;
+      int bot   = (boxes[i].y + boxes[i].h/2.) * im->h;
+
+      if (right > im->w-1)  right = im->w-1;
+      if (bot > im->h-1)    bot = im->h-1;
+
+      newObj.tl_x = left < 0 ? 0 : left;
+      newObj.tl_y = top < 0 ? 0 : top;
+      newObj.width = right - newObj.tl_x;
+      newObj.height = bot - newObj.tl_y;
+      objList.push_back( newObj );
+      //draw_box_width(im, left, top, right, bot, width, red, green, blue);
+      //if (labels) draw_label(im, top + width, left, labels[class], rgb);
+    }
+  }
 }
 
 } // namespace uts_perp

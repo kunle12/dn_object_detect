@@ -27,10 +27,14 @@
 #include <darknet/parser.h>
 #include <darknet/box.h>
 
+#include "dn_object_detect/ObjectInfo.h"
+
 using namespace std;
 using namespace ros;
 
 namespace uts_perp {
+
+typedef std::vector<dn_object_detect::ObjectInfo> DetectedList;
 
 class MultiClassObjectDetector
 {
@@ -56,12 +60,9 @@ private:
   bool showDebug_;
   int srvRequests_;
 
+  float threshold_;
+
   boost::mutex mutex_;
-  
-  boost::barrier * preprocess_barrier_;
-  boost::barrier * postprocess_barrier_;
-  boost::barrier * data_preprocess_barrier_;
-  boost::barrier * data_postprocess_barrier_;
   
   boost::thread * object_detect_thread_;
   
@@ -84,7 +85,11 @@ private:
   void stopDetection();
 
   void doObjectDetection();
-  void drawDebug( std::vector<TrackingObject> & tObjs );
+
+  void consolidateDetectedObjects( const image * im, const box * boxes,
+      const float **probs, DetectedList & objList );
+  void publishDetectedObjects( const DetectedList & objs );
+  void drawDebug( const DetectedList & objs );
 };
   
 } // namespace uts_perp

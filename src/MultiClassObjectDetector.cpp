@@ -45,6 +45,13 @@ static const char * VoClassNames[] = { "aeroplane", "bicycle", "bird", // should
 
 static int NofVoClasses = sizeof( VoClassNames ) / sizeof( VoClassNames[0] );
 
+/*
+extern "C" {
+void convert_yolo_detections(float *predictions, int classes, int num, int square, int side, int w, int h, float thresh, float **probs, box *boxes, int only_objectness);
+
+}
+*/
+
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
   doDetection_( false ),
@@ -165,7 +172,7 @@ void MultiClassObjectDetector::doObjectDetection()
             detectLayer_.classes, nms );
       }
 
-      this->consolidateDetectedObjects(im, boxes, probs, detectObjs );
+      this->consolidateDetectedObjects( &im, boxes, probs, detectObjs );
       //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
       free_image(im);
       free_image(sized);
@@ -239,8 +246,8 @@ void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs
   
   tObjMsg.objects.resize( objs.size() );
 
-  for (size_t i = 0; i < tObjMsg.size(); i++) {
-    tObjUpdMsg.objects[i] = objs[i];
+  for (size_t i = 0; i < objs.size(); i++) {
+    tObjMsg.objects[i] = objs[i];
   }
 
   dtcPub_.publish( tObjMsg );
@@ -252,12 +259,12 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
   cv::Scalar connColour( 209, 47, 27 );
 
   for (size_t i = 0; i < objs.size(); i++) {
-    dn_object_detect::ObjectInfo & obj = objs.at( i );
+    dn_object_detect::ObjectInfo obj = objs[i];
     cv::rectangle( cv_ptr_->image, cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height),
         boundColour, 2 );
 
     // only write text on the head or body if no head is detected.
-    std::string box_text = format("%d", obj.type);
+    std::string box_text = format( "%s", obj.type.c_str() );
     // Calculate the position for annotated text (make sure we don't
     // put illegal values in there):
     cv::Point2i txpos( std::max(obj.tl_x - 10, 0),
@@ -268,8 +275,8 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
   imgPub_.publish( cv_ptr_->toImageMsg() );
 }
 
-void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, const box * boxes,
-      const float **probs, DetectedList & objList )
+void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box * boxes,
+      float **probs, DetectedList & objList )
 {
   int max_nofb = detectLayer_.side * detectLayer_.side * detectLayer_.n;
   int objclass = 0;

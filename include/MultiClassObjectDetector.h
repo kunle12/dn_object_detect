@@ -20,12 +20,7 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 
-#include <darknet/network.h>
-#include <darknet/detection_layer.h>
-#include <darknet/cost_layer.h>
-#include <darknet/utils.h>
-#include <darknet/parser.h>
-#include <darknet/box.h>
+#include <darknet/yolo.h>
 
 #include "dn_object_detect/ObjectInfo.h"
 
@@ -86,8 +81,8 @@ private:
 
   void doObjectDetection();
 
-  void consolidateDetectedObjects( const image * im, const box * boxes,
-      const float **probs, DetectedList & objList );
+  void consolidateDetectedObjects( const image * im, box * boxes,
+      float **probs, DetectedList & objList );
   void publishDetectedObjects( const DetectedList & objs );
   void drawDebug( const DetectedList & objs );
 };

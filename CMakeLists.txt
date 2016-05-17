@@ -114,7 +114,7 @@ catkin_package(
 ###########
 ## Build ##
 ###########
-
+add_definitions(-DOPENCV)
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 # include_directories(include)
@@ -145,8 +145,8 @@ set_target_properties(darknet_objects_detection PROPERTIES IMPORTED_LOCATION ${P
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(dn_object_detect
-   ${catkin_LIBRARIES}
    darknet_objects_detection
+   ${catkin_LIBRARIES}
 )
 
 #############

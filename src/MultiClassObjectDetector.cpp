@@ -82,11 +82,11 @@ void MultiClassObjectDetector::init()
   
   if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( configFilepath )) {
     darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
-    load_weights( &darkNet_, (char*)yoloModelFile.c_str() );
-    detectLayer_ = darkNet_.layers[darkNet_.n-1];
+    load_weights( darkNet_, (char*)yoloModelFile.c_str() );
+    detectLayer_ = darkNet_->layers[darkNet_->n-1];
     printf( "detect layer side = %d n = %d\n", detectLayer_.side, detectLayer_.n );
     maxNofBoxes_ = detectLayer_.side * detectLayer_.side * detectLayer_.n;
-    set_batch_network( &darkNet_, 1 );
+    set_batch_network( darkNet_, 1 );
     srand(2222222);
   }
   else {
@@ -119,6 +119,7 @@ void MultiClassObjectDetector::fini()
     delete procThread_;
     procThread_ = NULL;
   }
+  free_network( darkNet_ );
   initialised_ = false;
 }
 
@@ -166,7 +167,7 @@ void MultiClassObjectDetector::doObjectDetection()
     if (cv_ptr_.get()) {
       IplImage img = cv_ptr_->image;
       image im = ipl_to_image( &img );
-      image sized = resize_image( im, darkNet_.w, darkNet_.h );
+      image sized = resize_image( im, darkNet_->w, darkNet_->h );
       float *X = sized.data;
       float *predictions = network_predict( darkNet_, X );
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));

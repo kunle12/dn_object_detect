@@ -71,7 +71,7 @@ private:
   
   cv_bridge::CvImagePtr cv_ptr_;
   
-  network darkNet_;
+  network * darkNet_;
   detection_layer detectLayer_;
   int maxNofBoxes_;
 

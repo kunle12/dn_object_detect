@@ -17,6 +17,25 @@ find_package(catkin REQUIRED COMPONENTS
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
+FIND_PACKAGE(CUDA)
+if (CUDA_FOUND)
+    message(STATUS "CUDA Version: " ${CUDA_VERSION_STRINGS})
+    message(STATUS "CUDA Libararies: " ${CUDA_LIBRARIES})
+    include_directories(SYSTEM ${CUDA_INCLUDE_DIRS})
+    list(APPEND LIBRARIES ${CUDA_LIBRARIES} ${CUDA_CUBLAS_LIBRARIES} ${CUDA_curand_LIBRARY} ${CUDA_cusparse_LIBRARY})
+    list(APPEND CUDA_NVCC_FLAGS "-std=c++11;-O2;-Xcompiler \"-fPIC\" ")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_20,code=compute_20 ")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_30,code=compute_30 ")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_35,code=compute_35 ")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_50,code=compute_50 ")
+    list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_52,code=compute_52 ")
+    set(CUDA_PROPAGATE_HOST_FLAGS OFF)
+    add_definitions(-DGPU)
+    cuda_include_directories(src)
+else()
+    list(APPEND LIBRARIES "m")
+endif()
+
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -164,11 +183,19 @@ target_link_libraries(dn_object_detect
 # )
 
 ## Mark executables and/or libraries for installation
-# install(TARGETS dn_object_detect dn_object_detect_node
+install(TARGETS dn_object_detect dn_object_detect
 #   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 #   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)
+
+install(DIRECTORY data/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/data
+)
 
 ## Mark cpp header files for installation
 # install(DIRECTORY include/${PROJECT_NAME}/

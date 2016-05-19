@@ -51,8 +51,8 @@ private:
   Publisher dtcPub_;
 
   bool doDetection_;
-  bool stoppingBDThread_;
-  bool showDebug_;
+  bool initialised_;
+  int debugRequests_;
   int srvRequests_;
 
   float threshold_;
@@ -73,11 +73,15 @@ private:
   
   network darkNet_;
   detection_layer detectLayer_;
+  int maxNofBoxes_;
 
   void processingRawImages( const sensor_msgs::ImageConstPtr& msg );
 
   void startDetection();
   void stopDetection();
+
+  void startDebugView();
+  void stopDebugView();
 
   void doObjectDetection();
 

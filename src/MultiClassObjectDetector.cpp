@@ -14,7 +14,6 @@
 #include <boost/timer.hpp>
 #include <boost/format.hpp>
 #include <boost/ref.hpp>
-#include <boost/gil/gil_all.hpp>
 #include <boost/foreach.hpp>
 #include <boost/thread/thread.hpp>
 #include <boost/filesystem/operations.hpp>
@@ -54,15 +53,12 @@ void convert_yolo_detections(float *predictions, int classes, int num, int squar
 
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
+  initialised_( false ),
   doDetection_( false ),
-  showDebug_( false ),
+  debugRequests_( 0 ),
   srvRequests_( 0 ),
   procThread_( NULL )
 {
-  dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1,
-      boost::bind( &MultiClassObjectDetector::startDetection, this ),
-      boost::bind( &MultiClassObjectDetector::stopDetection, this) );
-
   priImgNode_.setCallbackQueue( &imgQueue_ );
 }
 
@@ -88,11 +84,14 @@ void MultiClassObjectDetector::init()
     darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
     load_weights( &darkNet_, (char*)yoloModelFile.c_str() );
     detectLayer_ = darkNet_.layers[darkNet_.n-1];
+    printf( "detect layer side = %d n = %d\n", detectLayer_.side, detectLayer_.n );
+    maxNofBoxes_ = detectLayer_.side * detectLayer_.side * detectLayer_.n;
     set_batch_network( &darkNet_, 1 );
     srand(2222222);
   }
   else {
     ROS_ERROR( "Unable to find YOLO darknet configuration or model files." );
+    return;
   }
 
   ROS_INFO( "Loaded detection model data." );
@@ -100,21 +99,27 @@ void MultiClassObjectDetector::init()
   procThread_ = new AsyncSpinner( 1, &imgQueue_ );
   procThread_->start();
 
-  if (showDebug_) {
-    imgPub_ = imgTrans_.advertise( "/dn_object_detect/debug_view", 1 );
-  }
+  dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1,
+      boost::bind( &MultiClassObjectDetector::startDetection, this ),
+      boost::bind( &MultiClassObjectDetector::stopDetection, this) );
+
+  imgPub_ = imgTrans_.advertise( "/dn_object_detect/debug_view", 1,
+      boost::bind( &MultiClassObjectDetector::startDebugView, this ),
+      boost::bind( &MultiClassObjectDetector::stopDebugView, this) );
+
+  initialised_ = true;
 }
 
 void MultiClassObjectDetector::fini()
 {
   srvRequests_ = 1; // reset requests
   this->stopDetection();
-  imgSub_.shutdown();
 
   if (procThread_) {
     delete procThread_;
     procThread_ = NULL;
   }
+  initialised_ = false;
 }
 
 void MultiClassObjectDetector::continueProcessing()
@@ -129,9 +134,9 @@ void MultiClassObjectDetector::doObjectDetection()
 
   float nms = 0.5;
 
-  box * boxes = (box *)calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof( box ) );
-  float **probs = (float **)calloc( detectLayer_.side * detectLayer_.side * detectLayer_.n, sizeof(float *));
-  for(int j = 0; j < detectLayer_.side * detectLayer_.side * detectLayer_.n; ++j) {
+  box * boxes = (box *)calloc( maxNofBoxes_, sizeof( box ) );
+  float **probs = (float **)calloc( maxNofBoxes_, sizeof(float *));
+  for(int j = 0; j < maxNofBoxes_; ++j) {
     probs[j] = (float *)calloc( detectLayer_.classes, sizeof(float *) );
   }
 
@@ -168,7 +173,7 @@ void MultiClassObjectDetector::doObjectDetection()
       convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
           detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
       if (nms) {
-        do_nms_sort( boxes, probs, detectLayer_.side * detectLayer_.side * detectLayer_.n,
+        do_nms_sort( boxes, probs, maxNofBoxes_,
             detectLayer_.classes, nms );
       }
 
@@ -176,6 +181,9 @@ void MultiClassObjectDetector::doObjectDetection()
       //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
       free_image(im);
       free_image(sized);
+      this->publishDetectedObjects( detectObjs );
+      if (debugRequests_ > 0)
+        this->drawDebug( detectObjs );
     }
     cv_ptr_.reset();
 
@@ -183,7 +191,7 @@ void MultiClassObjectDetector::doObjectDetection()
   }
 
   // clean up
-  for(int j = 0; j < detectLayer_.side * detectLayer_.side * detectLayer_.n; ++j) {
+  for(int j = 0; j < maxNofBoxes_; ++j) {
     free( probs[j] );
   }
   free( probs );
@@ -197,16 +205,31 @@ void MultiClassObjectDetector::processingRawImages( const sensor_msgs::ImageCons
 
   imgMsgPtr_ = msg;
 }
+
+void MultiClassObjectDetector::startDebugView()
+{
+  if (debugRequests_ == 0)
+    this->startDetection();
   
+  debugRequests_++;
+}
+
+void MultiClassObjectDetector::stopDebugView()
+{
+  debugRequests_--;
+  if (debugRequests_ <= 0)
+    this->stopDetection();
+
+}
+
 void MultiClassObjectDetector::startDetection()
 {
+  if (!initialised_) {
+    ROS_ERROR( "Detector is not initialised correctly!\n" );
+  }
   srvRequests_ ++;
-  if (srvRequests_ == 1) {
-    ROS_INFO( "Start human detection and tracking service..." );
-  }
-  else {
+  if (srvRequests_ > 1)
     return;
-  }
 
   doDetection_ = true;
   cv_ptr_.reset();
@@ -264,7 +287,7 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
         boundColour, 2 );
 
     // only write text on the head or body if no head is detected.
-    std::string box_text = format( "%s", obj.type.c_str() );
+    std::string box_text = format( "%s prob=%.2f", obj.type.c_str(), obj.prob );
     // Calculate the position for annotated text (make sure we don't
     // put illegal values in there):
     cv::Point2i txpos( std::max(obj.tl_x - 10, 0),
@@ -278,13 +301,13 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
 void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box * boxes,
       float **probs, DetectedList & objList )
 {
-  int max_nofb = detectLayer_.side * detectLayer_.side * detectLayer_.n;
+  //printf( "max_nofb %d, NofVoClasses %d\n", max_nofb, NofVoClasses );
   int objclass = 0;
   float prob = 0.0;
 
   objList.clear();
 
-  for(int i = 0; i < max_nofb; ++i){
+  for(int i = 0; i < maxNofBoxes_; ++i){
     objclass = max_index( probs[i], NofVoClasses );
     prob = probs[i][objclass];
 
@@ -293,8 +316,9 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       dn_object_detect::ObjectInfo newObj;
       newObj.type = VoClassNames[objclass];
       newObj.prob = prob;
+
+      //printf("%s: %.2f\n", VoClassNames[objclass], prob);
       /*
-      printf("%s: %.2f\n", VoClassNames[objclass], prob);
       int offset = class * 17 % classes;
       float red = get_color(0,offset,classes);
       float green = get_color(1,offset,classes);

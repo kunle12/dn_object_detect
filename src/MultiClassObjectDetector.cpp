@@ -99,6 +99,8 @@ void MultiClassObjectDetector::init()
   procThread_ = new AsyncSpinner( 1, &imgQueue_ );
   procThread_->start();
 
+  initialised_ = true;
+
   dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1,
       boost::bind( &MultiClassObjectDetector::startDetection, this ),
       boost::bind( &MultiClassObjectDetector::stopDetection, this) );
@@ -106,8 +108,6 @@ void MultiClassObjectDetector::init()
   imgPub_ = imgTrans_.advertise( "/dn_object_detect/debug_view", 1,
       boost::bind( &MultiClassObjectDetector::startDebugView, this ),
       boost::bind( &MultiClassObjectDetector::stopDebugView, this) );
-
-  initialised_ = true;
 }
 
 void MultiClassObjectDetector::fini()
@@ -227,6 +227,7 @@ void MultiClassObjectDetector::startDetection()
 {
   if (!initialised_) {
     ROS_ERROR( "Detector is not initialised correctly!\n" );
+    return;
   }
   srvRequests_ ++;
   if (srvRequests_ > 1)

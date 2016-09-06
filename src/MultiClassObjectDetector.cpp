@@ -19,6 +19,8 @@
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 
+#include <time.h>
+
 #include <darknet/image.h>
 #include "MultiClassObjectDetector.h"
 
@@ -29,7 +31,7 @@ namespace uts_perp {
 using namespace std;
 using namespace cv;
   
-static const int kPublishFreq = 10;
+static const int kPublishFreq = 5; // darknet can work reasonably around 5FPS
 static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
 static const string kYOLOModel = "data/yolo.weights";
 static const string kYOLOConfig = "data/yolo.cfg";
@@ -50,6 +52,16 @@ void convert_yolo_detections(float *predictions, int classes, int num, int squar
 
 }
 */
+
+static inline long timediff_usec( timespec start, timespec end )
+{
+  if ((end.tv_nsec - start.tv_nsec) < 0) {
+    return (end.tv_sec - start.tv_sec - 1) * 1E6 + (1E9 + end.tv_nsec - start.tv_nsec) / 1E3;
+  }
+  else {
+    return (end.tv_sec - start.tv_sec) * 1E6 + (end.tv_nsec - start.tv_nsec) / 1E3;
+  }
+}
 
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
@@ -130,7 +142,7 @@ void MultiClassObjectDetector::continueProcessing()
   
 void MultiClassObjectDetector::doObjectDetection()
 {
-  ros::Rate publish_rate( kPublishFreq );
+  //ros::Rate publish_rate( kPublishFreq );
   ros::Time ts;
 
   float nms = 0.5;
@@ -141,24 +153,29 @@ void MultiClassObjectDetector::doObjectDetection()
     probs[j] = (float *)calloc( detectLayer_.classes, sizeof(float *) );
   }
 
+  timespec time1, time2;
   DetectedList detectObjs;
   detectObjs.reserve( 30 ); // silly hardcode
 
+  long interval = long( 1.0 / double( kPublishFreq ) * 1E6);
+  long proctime = 0;
+
   while (doDetection_) {
+    clock_gettime( CLOCK_MONOTONIC, &time1 );
     {
       boost::mutex::scoped_lock lock( mutex_ );
       if (imgMsgPtr_.get() == NULL) {
-        publish_rate.sleep();
+        usleep( 2000 );
         continue;
       }
       try {
-        cv_ptr_ = cv_bridge::toCvCopy( imgMsgPtr_, sensor_msgs::image_encodings::BGR8 );
+        cv_ptr_ = cv_bridge::toCvCopy( imgMsgPtr_, sensor_msgs::image_encodings::RGB8 );
         ts = imgMsgPtr_->header.stamp;
       }
       catch (cv_bridge::Exception & e) {
         ROS_ERROR( "Unable to convert image message to mat." );
         imgMsgPtr_.reset();
-        publish_rate.sleep();
+        usleep( 2000 );
         continue;
       }
       imgMsgPtr_.reset();
@@ -188,7 +205,11 @@ void MultiClassObjectDetector::doObjectDetection()
     }
     cv_ptr_.reset();
 
-    publish_rate.sleep();
+    clock_gettime( CLOCK_MONOTONIC, &time2 );
+    proctime = timediff_usec( time1, time2 );
+    //printf( "detect process time %li usec\n",  proctime);
+    if (interval > proctime)
+      usleep( interval - proctime );
   }
 
   // clean up
@@ -237,8 +258,9 @@ void MultiClassObjectDetector::startDetection()
   cv_ptr_.reset();
   imgMsgPtr_.reset();
 
+  image_transport::TransportHints hints( "compressed" );
   imgSub_ = imgTrans_.subscribe( cameraDevice_, 1,
-                                  &MultiClassObjectDetector::processingRawImages, this );
+                                  &MultiClassObjectDetector::processingRawImages, this, hints );
   
   object_detect_thread_ = new boost::thread( &MultiClassObjectDetector::doObjectDetection, this );
 

@@ -58,6 +58,7 @@ private:
   float threshold_;
 
   boost::mutex mutex_;
+  boost::condition_variable imageCon_;
   
   boost::thread * object_detect_thread_;
   

@@ -31,7 +31,7 @@ namespace uts_perp {
 using namespace std;
 using namespace cv;
   
-static const int kPublishFreq = 5; // darknet can work reasonably around 5FPS
+static const int kPublishFreq = 10; // darknet can work reasonably around 5FPS
 static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
 static const string kYOLOModel = "data/yolo.weights";
 static const string kYOLOConfig = "data/yolo.cfg";
@@ -165,7 +165,7 @@ void MultiClassObjectDetector::doObjectDetection()
     {
       boost::mutex::scoped_lock lock( mutex_ );
       if (imgMsgPtr_.get() == NULL) {
-        usleep( 2000 );
+        imageCon_.wait( lock );
         continue;
       }
       try {
@@ -175,7 +175,6 @@ void MultiClassObjectDetector::doObjectDetection()
       catch (cv_bridge::Exception & e) {
         ROS_ERROR( "Unable to convert image message to mat." );
         imgMsgPtr_.reset();
-        usleep( 2000 );
         continue;
       }
       imgMsgPtr_.reset();
@@ -223,9 +222,12 @@ void MultiClassObjectDetector::doObjectDetection()
 void MultiClassObjectDetector::processingRawImages( const sensor_msgs::ImageConstPtr& msg )
 {
   // assume we cannot control the framerate (i.e. default 30FPS)
-  boost::mutex::scoped_lock lock( mutex_ );
+  boost::mutex::scoped_lock lock( mutex_, boost::try_to_lock );
 
-  imgMsgPtr_ = msg;
+  if (lock) {
+    imgMsgPtr_ = msg;
+    imageCon_.notify_one();
+  }
 }
 
 void MultiClassObjectDetector::startDebugView()

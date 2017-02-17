@@ -101,7 +101,7 @@ void MultiClassObjectDetector::init()
     return;
   }
 
-  if (detectLayer_.type != DETECTION || detectLayer_.type != REGION) {
+  if (!(detectLayer_.type == DETECTION || detectLayer_.type == REGION)) {
     ROS_ERROR( "Invalid YOLO darknet configuration." );
     return;
   }

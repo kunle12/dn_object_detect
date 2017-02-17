@@ -73,6 +73,9 @@ private:
   
   cv_bridge::CvImagePtr cv_ptr_;
   
+  std::vector<std::string> classLabels_;
+  int nofClasses_;
+
   network * darkNet_;
   detection_layer detectLayer_;
   int maxNofBoxes_;
@@ -91,6 +94,7 @@ private:
       float **probs, DetectedList & objList );
   void publishDetectedObjects( const DetectedList & objs );
   void drawDebug( const DetectedList & objs );
+  void initClassLabels( const std::string & filename );
 };
   
 } // namespace uts_perp

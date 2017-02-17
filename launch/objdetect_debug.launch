@@ -4,6 +4,7 @@
     <param name="camera" type="str" value="/usb_cam/image_raw"/>
     <param name="yolo_config" type="str" value="$(find dn_object_detect)/data/yolo-small.cfg"/>
     <param name="yolo_model" type="str" value="$(find dn_object_detect)/data/yolo-small.weights"/>
+    <param name="class_names" type="str" value="$(find dn_object_detect)/data/voc.names"/>
     <param name="threshold" type="double" value="0.2"/>
   </node>
 </launch>

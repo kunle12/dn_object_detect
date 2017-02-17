@@ -19,6 +19,8 @@
 #include <boost/filesystem/path.hpp>
 
 #include <time.h>
+#include <sstream>
+#include <fstream>
 
 #include <darknet/image.h>
 #include <darknet/detection_layer.h>
@@ -37,8 +39,9 @@ static const int kPublishFreq = 10; // darknet can work reasonably around 5FPS
 static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
 static const string kYOLOModel = "data/yolo.weights";
 static const string kYOLOConfig = "data/yolo.cfg";
+static const string kClassNamesConfig = "data/voc.names";
 
-static const char * VoClassNames[] = { "aeroplane", "bicycle", "bird", // should not hard code these name
+static const char * VoClassNames[] = { "aeroplane", "bicycle", "bird",
                               "boat", "bottle", "bus", "car",
                               "cat", "chair", "cow", "diningtable",
                               "dog", "horse", "motorbike",
@@ -64,7 +67,8 @@ MultiClassObjectDetector::MultiClassObjectDetector() :
   doDetection_( false ),
   debugRequests_( 0 ),
   srvRequests_( 0 ),
-  procThread_( NULL )
+  procThread_( NULL ),
+  object_detect_thread_( NULL )
 {
   priImgNode_.setCallbackQueue( &imgQueue_ );
 }
@@ -78,16 +82,18 @@ void MultiClassObjectDetector::init()
   NodeHandle priNh( "~" );
   std::string yoloModelFile;
   std::string yoloConfigFile;
+  std::string classNamesFile;
   
   priNh.param<std::string>( "camera", cameraDevice_, kDefaultDevice );
   priNh.param<std::string>( "yolo_model", yoloModelFile, kYOLOModel );
   priNh.param<std::string>( "yolo_config", yoloConfigFile, kYOLOConfig );
+  priNh.param<std::string>( "class_names", classNamesFile, kClassNamesConfig );
   priNh.param( "threshold", threshold_, 0.2f );
   
   const boost::filesystem::path modelFilePath = yoloModelFile;
-  const boost::filesystem::path configFilepath = yoloConfigFile;
+  const boost::filesystem::path configFilePath = yoloConfigFile;
   
-  if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( configFilepath )) {
+  if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( configFilePath )) {
     darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
     load_weights( darkNet_, (char*)yoloModelFile.c_str() );
     detectLayer_ = darkNet_->layers[darkNet_->n-1];
@@ -105,6 +111,8 @@ void MultiClassObjectDetector::init()
     ROS_ERROR( "Invalid YOLO darknet configuration." );
     return;
   }
+
+  this->initClassLabels( classNamesFile );
 
   ROS_INFO( "Loaded detection model data." );
   
@@ -288,11 +296,11 @@ void MultiClassObjectDetector::stopDetection()
     object_detect_thread_->join();
     delete object_detect_thread_;
     object_detect_thread_ = NULL;
+
+    imgSub_.shutdown();
+
+    ROS_INFO( "Stopping multi-class object detection service." );
   }
-
-  imgSub_.shutdown();
-
-  ROS_INFO( "Stopping multi-class object detection service." );
 }
 
 void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs )
@@ -341,13 +349,13 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
   objList.clear();
 
   for(int i = 0; i < maxNofBoxes_; ++i){
-    objclass = max_index( probs[i], NofVoClasses );
+    objclass = max_index( probs[i], nofClasses_ );
     prob = probs[i][objclass];
 
     if (prob > threshold_) {
       int width = pow( prob, 0.5 ) * 10 + 1;
       dn_object_detect::ObjectInfo newObj;
-      newObj.type = VoClassNames[objclass];
+      newObj.type = classLabels_[objclass].c_str();
       newObj.prob = prob;
 
       //printf("%s: %.2f\n", VoClassNames[objclass], prob);
@@ -380,6 +388,29 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       //if (labels) draw_label(im, top + width, left, labels[class], rgb);
     }
   }
+}
+
+void MultiClassObjectDetector::initClassLabels( const std::string & filename )
+{
+  const boost::filesystem::path labelFilePath = filename;
+  if (boost::filesystem::exists( labelFilePath )) {
+    ifstream ifs( filename.c_str(), std::ifstream::in );
+    stringstream sstr;
+    string label;
+    sstr << ifs.rdbuf();
+    ifs.close();
+    while(std::getline( sstr, label ) ) {
+      classLabels_.push_back( label );
+      //printf( "class label %s\n", label.c_str() );
+    }
+    ROS_INFO( "Loaded class names from %s.\n", filename.c_str() );
+  }
+  if (classLabels_.size() == 0) {
+    std::vector<std::string> data( VoClassNames, VoClassNames + NofVoClasses );
+    classLabels_ = data;
+    ROS_INFO( "Loaded default VOC class name list." );
+  }
+  nofClasses_ = (int)classLabels_.size();
 }
 
 } // namespace uts_perp

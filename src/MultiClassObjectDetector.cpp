@@ -21,6 +21,9 @@
 #include <time.h>
 
 #include <darknet/image.h>
+#include <darknet/detection_layer.h>
+#include <darknet/region_layer.h>
+
 #include "MultiClassObjectDetector.h"
 
 #include "dn_object_detect/DetectedObjects.h"
@@ -44,13 +47,6 @@ static const char * VoClassNames[] = { "aeroplane", "bicycle", "bird", // should
                             };
 
 static int NofVoClasses = sizeof( VoClassNames ) / sizeof( VoClassNames[0] );
-
-/*
-extern "C" {
-void convert_yolo_detections(float *predictions, int classes, int num, int square, int side, int w, int h, float thresh, float **probs, box *boxes, int only_objectness);
-
-}
-*/
 
 static inline long timediff_usec( timespec start, timespec end )
 {
@@ -95,13 +91,18 @@ void MultiClassObjectDetector::init()
     darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
     load_weights( darkNet_, (char*)yoloModelFile.c_str() );
     detectLayer_ = darkNet_->layers[darkNet_->n-1];
-    printf( "detect layer side = %d n = %d\n", detectLayer_.side, detectLayer_.n );
-    maxNofBoxes_ = detectLayer_.side * detectLayer_.side * detectLayer_.n;
+    printf( "detect layer w = %d h = %d n = %d\n", detectLayer_.w, detectLayer_.h, detectLayer_.n );
+    maxNofBoxes_ = detectLayer_.w * detectLayer_.h * detectLayer_.n;
     set_batch_network( darkNet_, 1 );
     srand(2222222);
   }
   else {
     ROS_ERROR( "Unable to find YOLO darknet configuration or model files." );
+    return;
+  }
+
+  if (detectLayer_.type != DETECTION || detectLayer_.type != REGION) {
+    ROS_ERROR( "Invalid YOLO darknet configuration." );
     return;
   }
 
@@ -186,8 +187,15 @@ void MultiClassObjectDetector::doObjectDetection()
       float *X = sized.data;
       float *predictions = network_predict( darkNet_, X );
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
-      convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
-          detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
+      //convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
+          //detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
+      if (detectLayer_.type == DETECTION) {
+        get_detection_boxes( detectLayer_, 1, 1, threshold_, probs, boxes, 0 );
+      }
+      else if (detectLayer_.type == REGION) {
+        get_region_boxes( detectLayer_, 1, 1, threshold_, probs, boxes, 0, 0, 0.5 );
+      }
+
       if (nms) {
         do_nms_sort( boxes, probs, maxNofBoxes_,
             detectLayer_.classes, nms );

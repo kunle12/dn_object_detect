@@ -16,8 +16,10 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-
+if (NOT CPUOnly)
 FIND_PACKAGE(CUDA)
+endif()
+
 if (CUDA_FOUND)
     message(STATUS "CUDA Version: " ${CUDA_VERSION_STRINGS})
     message(STATUS "CUDA Libararies: " ${CUDA_LIBRARIES})

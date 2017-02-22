@@ -97,7 +97,7 @@ void MultiClassObjectDetector::init()
     darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
     load_weights( darkNet_, (char*)yoloModelFile.c_str() );
     detectLayer_ = darkNet_->layers[darkNet_->n-1];
-    printf( "detect layer w = %d h = %d n = %d\n", detectLayer_.w, detectLayer_.h, detectLayer_.n );
+    printf( "detect layer (layer %d) w = %d h = %d n = %d\n", darkNet_->n, detectLayer_.w, detectLayer_.h, detectLayer_.n );
     maxNofBoxes_ = detectLayer_.w * detectLayer_.h * detectLayer_.n;
     set_batch_network( darkNet_, 1 );
     srand(2222222);

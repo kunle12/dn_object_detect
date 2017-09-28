@@ -21,7 +21,7 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 
-#include <darknet/yolo.h>
+#include <darknet/darknet.h>
 
 #include "dn_object_detect/ObjectInfo.h"
 
@@ -77,7 +77,7 @@ private:
   int nofClasses_;
 
   network * darkNet_;
-  detection_layer detectLayer_;
+  layer detectLayer_;
   int maxNofBoxes_;
 
   void processingRawImages( const sensor_msgs::ImageConstPtr& msg );

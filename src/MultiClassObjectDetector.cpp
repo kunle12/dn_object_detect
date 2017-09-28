@@ -22,10 +22,6 @@
 #include <sstream>
 #include <fstream>
 
-#include <darknet/image.h>
-#include <darknet/detection_layer.h>
-#include <darknet/region_layer.h>
-
 #include "MultiClassObjectDetector.h"
 
 #include "dn_object_detect/DetectedObjects.h"
@@ -168,6 +164,9 @@ void MultiClassObjectDetector::doObjectDetection()
   long interval = long( 1.0 / double( kPublishFreq ) * 1E6);
   long proctime = 0;
 
+  float * orig_input = darkNet_->input;
+  float * orig_input_gpu = darkNet_->input_gpu;
+
   while (doDetection_) {
     clock_gettime( CLOCK_MONOTONIC, &time1 );
     {
@@ -201,7 +200,8 @@ void MultiClassObjectDetector::doObjectDetection()
         get_detection_boxes( detectLayer_, 1, 1, threshold_, probs, boxes, 0 );
       }
       else if (detectLayer_.type == REGION) {
-        get_region_boxes( detectLayer_, 1, 1, threshold_, probs, boxes, 0, 0, 0.5 );
+        get_region_boxes( detectLayer_, im.w, im.h, darkNet_->w, darkNet_->h, threshold_,
+            probs, boxes, 0, 0, 0, 0.5, 1 );
       }
 
       if (nms) {
@@ -213,6 +213,10 @@ void MultiClassObjectDetector::doObjectDetection()
       //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
       free_image(im);
       free_image(sized);
+
+      darkNet_->input = orig_input;
+      darkNet_->input_gpu = orig_input_gpu;
+
       this->publishDetectedObjects( detectObjs );
       if (debugRequests_ > 0)
         this->drawDebug( detectObjs );

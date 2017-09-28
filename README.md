@@ -14,6 +14,14 @@ cmake -DCMAKE_INSTALL_PREFIX=<full path to dn_object_detect> ..
 make install
 ```
 
+**NOTE** If you are compiling darknet submodule with OpenCV 3.x, you need to add the following lines in ```opencv2/core/types_c.h``` after ```#include "opencv2/core/cvdef.h"```:
+
+```
+#ifndef __cplusplus
+#include "opencv2/core/fast_math.hpp"
+#endif
+```
+
 Go back to the catkin workspace base directory and compile the ROS node with
 
 ```

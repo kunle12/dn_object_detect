@@ -37,7 +37,7 @@ class MultiClassObjectDetector
 public:
   MultiClassObjectDetector();
   virtual ~MultiClassObjectDetector();
-  
+
   void init();
   void fini();
 
@@ -48,7 +48,7 @@ private:
   image_transport::ImageTransport imgTrans_;
   image_transport::Publisher imgPub_;
   image_transport::Subscriber imgSub_;
-  
+
   Publisher dtcPub_;
 
   bool doDetection_;
@@ -60,25 +60,24 @@ private:
 
   boost::mutex mutex_;
   boost::condition_variable imageCon_;
-  
+
   boost::thread * object_detect_thread_;
-  
+
   sensor_msgs::ImageConstPtr imgMsgPtr_;
 
   std::string cameraDevice_;
 
   CallbackQueue imgQueue_;
-  
+
   AsyncSpinner * procThread_;
-  
+
   cv_bridge::CvImagePtr cv_ptr_;
-  
+
   std::vector<std::string> classLabels_;
   int nofClasses_;
 
   network * darkNet_;
   layer detectLayer_;
-  int maxNofBoxes_;
 
   void processingRawImages( const sensor_msgs::ImageConstPtr& msg );
 
@@ -90,13 +89,13 @@ private:
 
   void doObjectDetection();
 
-  void consolidateDetectedObjects( const image * im, box * boxes,
-      float **probs, DetectedList & objList );
+  void consolidateDetectedObjects( const image * im, detection * dets,
+       int numofDetects, DetectedList & objList );
   void publishDetectedObjects( const DetectedList & objs );
   void drawDebug( const DetectedList & objs );
   void initClassLabels( const std::string & filename );
 };
-  
+
 } // namespace uts_perp
 
 #endif /* defined(__pr2_perception__MultiClassObjectDetector__) */

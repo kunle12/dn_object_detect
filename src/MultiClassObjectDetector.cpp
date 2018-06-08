@@ -30,7 +30,7 @@ namespace uts_perp {
 
 using namespace std;
 using namespace cv;
-  
+
 static const int kPublishFreq = 10; // darknet can work reasonably around 5FPS
 static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
 static const string kYOLOModel = "data/yolo.weights";
@@ -79,22 +79,20 @@ void MultiClassObjectDetector::init()
   std::string yoloModelFile;
   std::string yoloConfigFile;
   std::string classNamesFile;
-  
+
   priNh.param<std::string>( "camera", cameraDevice_, kDefaultDevice );
   priNh.param<std::string>( "yolo_model", yoloModelFile, kYOLOModel );
   priNh.param<std::string>( "yolo_config", yoloConfigFile, kYOLOConfig );
   priNh.param<std::string>( "class_names", classNamesFile, kClassNamesConfig );
   priNh.param( "threshold", threshold_, 0.2f );
-  
+
   const boost::filesystem::path modelFilePath = yoloModelFile;
   const boost::filesystem::path configFilePath = yoloConfigFile;
-  
+
   if (boost::filesystem::exists( modelFilePath ) && boost::filesystem::exists( configFilePath )) {
-    darkNet_ = parse_network_cfg( (char*)yoloConfigFile.c_str() );
-    load_weights( darkNet_, (char*)yoloModelFile.c_str() );
+    darkNet_ = load_network( (char*)yoloConfigFile.c_str(), (char*)yoloModelFile.c_str(), 0 );
     detectLayer_ = darkNet_->layers[darkNet_->n-1];
     printf( "detect layer (layer %d) w = %d h = %d n = %d\n", darkNet_->n, detectLayer_.w, detectLayer_.h, detectLayer_.n );
-    maxNofBoxes_ = detectLayer_.w * detectLayer_.h * detectLayer_.n;
     set_batch_network( darkNet_, 1 );
     srand(2222222);
   }
@@ -103,7 +101,7 @@ void MultiClassObjectDetector::init()
     return;
   }
 
-  if (!(detectLayer_.type == DETECTION || detectLayer_.type == REGION)) {
+  if (!(detectLayer_.type == DETECTION || detectLayer_.type == REGION || detectLayer_.type == YOLO)) {
     ROS_ERROR( "Invalid YOLO darknet configuration." );
     return;
   }
@@ -111,7 +109,7 @@ void MultiClassObjectDetector::init()
   this->initClassLabels( classNamesFile );
 
   ROS_INFO( "Loaded detection model data." );
-  
+
   procThread_ = new AsyncSpinner( 1, &imgQueue_ );
   procThread_->start();
 
@@ -143,19 +141,13 @@ void MultiClassObjectDetector::continueProcessing()
 {
   ros::spin();
 }
-  
+
 void MultiClassObjectDetector::doObjectDetection()
 {
   //ros::Rate publish_rate( kPublishFreq );
   ros::Time ts;
 
   float nms = 0.5;
-
-  box * boxes = (box *)calloc( maxNofBoxes_, sizeof( box ) );
-  float **probs = (float **)calloc( maxNofBoxes_, sizeof(float *));
-  for(int j = 0; j < maxNofBoxes_; ++j) {
-    probs[j] = (float *)calloc( detectLayer_.classes, sizeof(float *) );
-  }
 
   timespec time1, time2;
   DetectedList detectObjs;
@@ -196,21 +188,16 @@ void MultiClassObjectDetector::doObjectDetection()
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
       //convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
           //detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
-      if (detectLayer_.type == DETECTION) {
-        get_detection_boxes( detectLayer_, 1, 1, threshold_, probs, boxes, 0 );
-      }
-      else if (detectLayer_.type == REGION) {
-        get_region_boxes( detectLayer_, im.w, im.h, darkNet_->w, darkNet_->h, threshold_,
-            probs, boxes, 0, 0, 0, 0.5, 1 );
-      }
+      int nboxes = 0;
+      detection * dets = get_network_boxes( darkNet_, im.w, im.h, threshold_, 0.5, 0, 1, &nboxes);
 
       if (nms) {
-        do_nms_sort( boxes, probs, maxNofBoxes_,
-            detectLayer_.classes, nms );
+        do_nms_sort( dets, nboxes, detectLayer_.classes, nms );
       }
 
-      this->consolidateDetectedObjects( &im, boxes, probs, detectObjs );
+      this->consolidateDetectedObjects( &im, dets, nboxes, detectObjs );
       //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
+      free_detections( dets, nboxes );
       free_image(im);
       free_image(sized);
 
@@ -229,15 +216,8 @@ void MultiClassObjectDetector::doObjectDetection()
     if (interval > proctime)
       usleep( interval - proctime );
   }
-
-  // clean up
-  for(int j = 0; j < maxNofBoxes_; ++j) {
-    free( probs[j] );
-  }
-  free( probs );
-  free( boxes );
 }
-  
+
 void MultiClassObjectDetector::processingRawImages( const sensor_msgs::ImageConstPtr& msg )
 {
   // assume we cannot control the framerate (i.e. default 30FPS)
@@ -253,7 +233,7 @@ void MultiClassObjectDetector::startDebugView()
 {
   if (debugRequests_ == 0)
     this->startDetection();
-  
+
   debugRequests_++;
 }
 
@@ -282,7 +262,7 @@ void MultiClassObjectDetector::startDetection()
   image_transport::TransportHints hints( "compressed" );
   imgSub_ = imgTrans_.subscribe( cameraDevice_, 1,
                                   &MultiClassObjectDetector::processingRawImages, this, hints );
-  
+
   object_detect_thread_ = new boost::thread( &MultiClassObjectDetector::doObjectDetection, this );
 
   ROS_INFO( "Starting multi-class object detection service." );
@@ -295,7 +275,7 @@ void MultiClassObjectDetector::stopDetection()
     return;
 
   doDetection_ = false;
- 
+
   if (object_detect_thread_) {
     object_detect_thread_->join();
     delete object_detect_thread_;
@@ -311,7 +291,7 @@ void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs
 {
   dn_object_detect::DetectedObjects tObjMsg;
   tObjMsg.header = cv_ptr_->header;
-  
+
   tObjMsg.objects.resize( objs.size() );
 
   for (size_t i = 0; i < objs.size(); i++) {
@@ -343,8 +323,8 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
   imgPub_.publish( cv_ptr_->toImageMsg() );
 }
 
-void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box * boxes,
-      float **probs, DetectedList & objList )
+void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, detection * dets,
+     int numofDetects, DetectedList & objList )
 {
   //printf( "max_nofb %d, NofVoClasses %d\n", max_nofb, NofVoClasses );
   int objclass = 0;
@@ -352,33 +332,36 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
 
   objList.clear();
 
-  for(int i = 0; i < maxNofBoxes_; ++i){
-    objclass = max_index( probs[i], nofClasses_ );
-    prob = probs[i][objclass];
-
-    if (prob > threshold_) {
-      int width = pow( prob, 0.5 ) * 10 + 1;
+  for(int i = 0; i < numofDetects; ++i){
+    int objclass = -1;
+    float objmaxprob = 0.0;
+    std::string objlabels;
+    for(int j = 0; j < nofClasses_; ++j){
+      if (dets[i].prob[j] > threshold_){
+        if (dets[i].prob[j] > objmaxprob) {
+          objmaxprob = dets[i].prob[j];
+        }
+        if (objclass < 0) {
+          objlabels = classLabels_[j];
+          objclass = j;
+        }
+        else {
+          objlabels += "," + classLabels_[j];
+        }
+      }
+    }
+    if(objclass >= 0){
       dn_object_detect::ObjectInfo newObj;
-      newObj.type = classLabels_[objclass].c_str();
-      newObj.prob = prob;
+      newObj.type = objlabels;
+      newObj.prob = objmaxprob;
 
-      //printf("%s: %.2f\n", VoClassNames[objclass], prob);
-      /*
-      int offset = class * 17 % classes;
-      float red = get_color(0,offset,classes);
-      float green = get_color(1,offset,classes);
-      float blue = get_color(2,offset,classes);
-      float rgb[3];
-      rgb[0] = red;
-      rgb[1] = green;
-      rgb[2] = blue;
-      box b = boxes[i];
-      */
+      box b = dets[i].bbox;
+      //printf("%f %f %f %f\n", b.x, b.y, b.w, b.h);
 
-      int left  = (boxes[i].x - boxes[i].w/2.) * im->w;
-      int right = (boxes[i].x + boxes[i].w/2.) * im->w;
-      int top   = (boxes[i].y - boxes[i].h/2.) * im->h;
-      int bot   = (boxes[i].y + boxes[i].h/2.) * im->h;
+      int left  = (b.x - b.w/2.) * im->w;
+      int right = (b.x + b.w/2.) * im->w;
+      int top   = (b.y - b.h/2.) * im->h;
+      int bot   = (b.y + b.h/2.) * im->h;
 
       if (right > im->w-1)  right = im->w-1;
       if (bot > im->h-1)    bot = im->h-1;
@@ -388,8 +371,6 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       newObj.width = right - newObj.tl_x;
       newObj.height = bot - newObj.tl_y;
       objList.push_back( newObj );
-      //draw_box_width(im, left, top, right, bot, width, red, green, blue);
-      //if (labels) draw_label(im, top + width, left, labels[class], rgb);
     }
   }
 }

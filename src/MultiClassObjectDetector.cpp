@@ -25,6 +25,7 @@
 #include "MultiClassObjectDetector.h"
 
 #include "dn_object_detect/DetectedObjects.h"
+#include "dn_object_detect/AnnotatedView.h"
 
 namespace uts_perp {
 
@@ -62,6 +63,7 @@ MultiClassObjectDetector::MultiClassObjectDetector() :
   initialised_( false ),
   doDetection_( false ),
   debugRequests_( 0 ),
+  avRequests_( 0 ),
   srvRequests_( 0 ),
   procThread_( NULL ),
   object_detect_thread_( NULL )
@@ -118,6 +120,10 @@ void MultiClassObjectDetector::init()
   dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1,
       boost::bind( &MultiClassObjectDetector::startDetection, this ),
       boost::bind( &MultiClassObjectDetector::stopDetection, this) );
+
+  avPub_ = priImgNode_.advertise<dn_object_detect::AnnotatedView>( "/dn_object_detect/annotated_view", 1,
+      boost::bind( &MultiClassObjectDetector::startAnnotatedView, this ),
+      boost::bind( &MultiClassObjectDetector::stopAnnotatedView, this) );
 
   imgPub_ = imgTrans_.advertise( "/dn_object_detect/debug_view", 1,
       boost::bind( &MultiClassObjectDetector::startDebugView, this ),
@@ -207,6 +213,8 @@ void MultiClassObjectDetector::doObjectDetection()
       this->publishDetectedObjects( detectObjs );
       if (debugRequests_ > 0)
         this->drawDebug( detectObjs );
+      if (avRequests_ > 0)
+        this->publishAnnotatedView( detectObjs );
     }
     cv_ptr_.reset();
 
@@ -241,6 +249,22 @@ void MultiClassObjectDetector::stopDebugView()
 {
   debugRequests_--;
   if (debugRequests_ <= 0)
+    this->stopDetection();
+
+}
+
+void MultiClassObjectDetector::startAnnotatedView()
+{
+  if (avRequests_ == 0)
+    this->startDetection();
+
+  avRequests_++;
+}
+
+void MultiClassObjectDetector::stopAnnotatedView()
+{
+  avRequests_--;
+  if (avRequests_ <= 0)
     this->stopDetection();
 
 }
@@ -299,6 +323,19 @@ void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs
   }
 
   dtcPub_.publish( tObjMsg );
+}
+
+void MultiClassObjectDetector::publishAnnotatedView( const DetectedList & objs )
+{
+  dn_object_detect::AnnotatedView avMsg;
+  avMsg.image = *(cv_ptr_->toImageMsg());
+  avMsg.objects.resize( objs.size() );
+
+  for (size_t i = 0; i < objs.size(); i++) {
+    avMsg.objects[i] = objs[i];
+  }
+
+  avPub_.publish( avMsg );
 }
 
 void MultiClassObjectDetector::drawDebug( const DetectedList & objs )

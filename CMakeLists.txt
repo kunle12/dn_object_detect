@@ -73,6 +73,7 @@ add_message_files(
    FILES
    ObjectInfo.msg
    DetectedObjects.msg
+   AnnotatedView.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -93,6 +94,7 @@ add_message_files(
 generate_messages(
    DEPENDENCIES
    std_msgs
+   sensor_msgs
 )
 
 ################################################

@@ -50,11 +50,13 @@ private:
   image_transport::Subscriber imgSub_;
 
   Publisher dtcPub_;
+  Publisher avPub_;
 
   bool doDetection_;
   bool initialised_;
   int debugRequests_;
   int srvRequests_;
+  int avRequests_;
 
   float threshold_;
 
@@ -87,11 +89,15 @@ private:
   void startDebugView();
   void stopDebugView();
 
+  void startAnnotatedView();
+  void stopAnnotatedView();
+
   void doObjectDetection();
 
   void consolidateDetectedObjects( const image * im, detection * dets,
        int numofDetects, DetectedList & objList );
   void publishDetectedObjects( const DetectedList & objs );
+  void publishAnnotatedView( const DetectedList & objs );
   void drawDebug( const DetectedList & objs );
   void initClassLabels( const std::string & filename );
 };

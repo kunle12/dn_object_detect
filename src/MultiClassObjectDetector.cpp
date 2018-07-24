@@ -153,7 +153,7 @@ void MultiClassObjectDetector::doObjectDetection()
   //ros::Rate publish_rate( kPublishFreq );
   ros::Time ts;
 
-  float nms = 0.5;
+  float nms = 0.4;
 
   timespec time1, time2;
   DetectedList detectObjs;
@@ -276,7 +276,7 @@ void MultiClassObjectDetector::startDetection()
     return;
   }
   srvRequests_ ++;
-  if (srvRequests_ > 1)
+  if (srvRequests_ >= 1)
     return;
 
   doDetection_ = true;

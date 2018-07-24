@@ -276,7 +276,7 @@ void MultiClassObjectDetector::startDetection()
     return;
   }
   srvRequests_ ++;
-  if (srvRequests_ >= 1)
+  if (srvRequests_ > 1)
     return;
 
   doDetection_ = true;

@@ -2,6 +2,7 @@
   <env name="LD_LIBRARY_PATH" value="/home/xun/dev/opencv2gpu/lib:$(env LD_LIBRARY_PATH)"/>
   <node pkg="dn_object_detect" type="dn_object_detect" name="dn_object_detect" output="screen">
     <param name="camera" type="str" value="/usb_cam/image_raw"/>
+    <!-- <param name="camera" type="str" value="/stereo/left/image"/> -->
     <param name="_image_transport" type="str" value="compressed"/>
     <!--
     <param name="yolo_config" type="str" value="$(find dn_object_detect)/data/yolov3.cfg"/>
@@ -12,6 +13,6 @@
     <param name="yolo_config" type="str" value="$(find dn_object_detect)/data/yolov3-face-tiny.cfg"/>
     <param name="yolo_model" type="str" value="$(find dn_object_detect)/data/yolov3-face-tiny.weights"/>
     <param name="class_names" type="str" value="$(find dn_object_detect)/data/face.names"/>
-    <param name="threshold" type="double" value="0.4"/>
+    <param name="threshold" type="double" value="0.5"/>
   </node>
 </launch>

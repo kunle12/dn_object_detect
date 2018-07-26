@@ -58,6 +58,16 @@ static inline long timediff_usec( timespec start, timespec end )
   }
 }
 
+static inline float clip_val( float val )
+{
+  if (val < 0.0)
+    return 0.0;
+  else if (val > 1.0)
+    return 1.0;
+  else
+    return val;
+}
+
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
   initialised_( false ),
@@ -155,6 +165,8 @@ void MultiClassObjectDetector::doObjectDetection()
 
   float nms = 0.4;
 
+  cv::Mat dst( darkNet_->w, darkNet_->h, 3 );
+
   timespec time1, time2;
   DetectedList detectObjs;
   detectObjs.reserve( 30 ); // silly hardcode
@@ -186,26 +198,28 @@ void MultiClassObjectDetector::doObjectDetection()
     }
 
     if (cv_ptr_.get()) {
-      IplImage img = cv_ptr_->image;
+      cv::resize( cv_ptr_->image, dst, cv::Size(darkNet_->w, darkNet_->h), 0, 0, cv::INTER_AREA );
+      IplImage img = dst;
+
       image im = ipl_to_image( &img );
-      image sized = resize_image( im, darkNet_->w, darkNet_->h );
-      float *X = sized.data;
+
+      //image sized = resize_image( im, darkNet_->w, darkNet_->h );
+      float *X = im.data;
+
       float *predictions = network_predict( darkNet_, X );
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
       //convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
           //detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
       int nboxes = 0;
-      detection * dets = get_network_boxes( darkNet_, im.w, im.h, threshold_, 0.5, 0, 1, &nboxes);
+      detection * dets = get_network_boxes( darkNet_, cv_ptr_->image.cols, cv_ptr_->image.rows, threshold_, 0.5, 0, 1, &nboxes);
 
       if (nms) {
         do_nms_sort( dets, nboxes, detectLayer_.classes, nms );
       }
 
-      this->consolidateDetectedObjects( &im, dets, nboxes, detectObjs );
-      //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
+      this->consolidateDetectedObjects( cv_ptr_->image, dets, nboxes, detectObjs );
       free_detections( dets, nboxes );
       free_image(im);
-      free_image(sized);
 
       darkNet_->input = orig_input;
       darkNet_->input_gpu = orig_input_gpu;
@@ -360,7 +374,7 @@ void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
   imgPub_.publish( cv_ptr_->toImageMsg() );
 }
 
-void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, detection * dets,
+void MultiClassObjectDetector::consolidateDetectedObjects( const cv::Mat & im, detection * dets,
      int numofDetects, DetectedList & objList )
 {
   //printf( "max_nofb %d, NofVoClasses %d\n", max_nofb, NofVoClasses );
@@ -369,6 +383,7 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, det
 
   objList.clear();
 
+  float cor_x, cor_y, xmin, xmax, ymin, ymax;
   for(int i = 0; i < numofDetects; ++i){
     int objclass = -1;
     float objmaxprob = 0.0;
@@ -395,18 +410,35 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, det
       box b = dets[i].bbox;
       //printf("%f %f %f %f\n", b.x, b.y, b.w, b.h);
 
-      int left  = (b.x - b.w/2.) * im->w;
-      int right = (b.x + b.w/2.) * im->w;
-      int top   = (b.y - b.h/2.) * im->h;
-      int bot   = (b.y + b.h/2.) * im->h;
+      cor_x = clip_val( b.x );
+      cor_y = clip_val( b.y );
+      //printf("%f %f %f %f\n", b.x, b.y, b.w, b.h);
 
-      if (right > im->w-1)  right = im->w-1;
-      if (bot > im->h-1)    bot = im->h-1;
+      xmin = (cor_x - b.w/2.) * im.cols;
+      xmax = (cor_x + b.w/2.) * im.cols;
+      ymin = (cor_y - b.h/2.) * im.rows;
+      ymax = (cor_y + b.h/2.) * im.rows;
 
-      newObj.tl_x = left < 0 ? 0 : left;
-      newObj.tl_y = top < 0 ? 0 : top;
-      newObj.width = right - newObj.tl_x;
-      newObj.height = bot - newObj.tl_y;
+      /*
+      if (xmax > im->w-1)  xmax = im->w-1;
+      if (ymax > im->h-1)    ymax = im->h-1;
+      */
+
+      if (xmin < 0) xmin = 0;
+      if (ymin < 0) ymin = 0;
+      if (xmax > im.cols) xmax = im.cols;
+      if (ymax > im.rows) ymax = im.rows;
+
+      if (xmin >= xmax || ymin >= ymax) {
+        printf( "Invalid box idx %d  xmin %f, ymin %f box (%f,%f,%f,%f)\n", i, xmin, ymin,
+            b.x, b.y, b.w, b.h);
+        continue;
+      }
+
+      newObj.tl_x = int(xmin);
+      newObj.tl_y = int(ymin);
+      newObj.width = int(xmax - xmin);
+      newObj.height = int(ymax - ymin);
       objList.push_back( newObj );
     }
   }

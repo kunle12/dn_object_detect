@@ -94,7 +94,7 @@ private:
 
   void doObjectDetection();
 
-  void consolidateDetectedObjects( const image * im, detection * dets,
+  void consolidateDetectedObjects( const cv::Mat & im, detection * dets,
        int numofDetects, DetectedList & objList );
   void publishDetectedObjects( const DetectedList & objs );
   void publishAnnotatedView( const DetectedList & objs );
